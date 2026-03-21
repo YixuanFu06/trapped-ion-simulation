@@ -5,7 +5,17 @@ import units
 import numpy as np
 
 class PaulTrap:
-    def __init__(self, num_ions, frequencies, gamma_laser, gamma_thermal, temperature, rmsd_alpha=0.002):
+    def __init__(self, num_ions: int, frequencies: tuple, gamma_laser: float, gamma_thermal: float, temperature: float):
+        """
+        Initialize the Paul Trap simulation.
+
+        Args:
+            num_ions (int): Number of ions.
+            frequencies (tuple/list): Trap frequencies (fx, fy, fz).
+            gamma_laser (float): Laser cooling damping rate.
+            gamma_thermal (float): Thermal bath coupling rate.
+            temperature (float): Target temperature of the thermal bath.
+        """
         self.num_ions = num_ions
         # Store initial params for reset
         self.current_time = 0.0
@@ -29,15 +39,9 @@ class PaulTrap:
         self.recompute_gamma_eff()
         self.recompute_noise_std()
 
-        # RMSD Statistics Configuration: Exponential Moving Average
-        self.rmsd_alpha = rmsd_alpha # Decay factor
-        self.mean_pos = None
-        self.mean_sq_pos = None
-        self.mean_rmsd = 0.0
-
         self.positions = np.zeros((self.num_ions, 3))
         self.velocities = np.zeros((self.num_ions, 3))
-        
+
         # Cache for deterministic forces
         self.stored_forces = None
 
@@ -47,11 +51,6 @@ class PaulTrap:
         # Reset current time
         self.current_time = 0.0
         self.stored_forces = None
-
-        # Reset RMSD statistics
-        self.mean_pos = None
-        self.mean_sq_pos = None
-        self.mean_rmsd = 0.0
 
         if self.num_ions == 0:
             self.positions = np.empty((0, 3))
@@ -80,10 +79,6 @@ class PaulTrap:
     def add_ion(self, n=1):
         self.num_ions += n
 
-        # Reset RMSD stats on ion change
-        self.mean_pos = None
-        self.mean_sq_pos = None
-        self.mean_rmsd = 0.0
         # Invalidate cache
         self.stored_forces = None
 
@@ -113,10 +108,6 @@ class PaulTrap:
         self.real_temperature = 0.0
         self.velocities = np.empty((0, 3))
         self.stored_forces = None
-        # Reset stats
-        self.mean_pos = None
-        self.mean_sq_pos = None
-        self.mean_rmsd = 0.0
 
     def catch_ions(self, n):
         self.num_ions = n
@@ -168,7 +159,7 @@ class PaulTrap:
 
         self.recompute_gamma_eff()
         self.recompute_noise_std()
-        
+
         # Invalidate cached forces because frequencies (and thus trap forces) may have changed
         self.stored_forces = None
 
@@ -237,24 +228,5 @@ class PaulTrap:
         self.real_temperature = np.sum(self.velocities**2) / (3 * self.num_ions)
 
         self.current_time += dt
-
-        # Update RMSD Stats (Exponential Moving Average)
-        # Using alpha to decay old history
-        if self.mean_pos is None or self.mean_pos.shape[0] != self.num_ions:
-            # Initialize or Re-initialize if shape mismatch
-            self.mean_pos = self.positions.copy()
-            self.mean_sq_pos = self.positions**2
-            self.mean_rmsd = 0.0
-        else:
-            self.mean_pos = (1 - self.rmsd_alpha) * self.mean_pos + self.rmsd_alpha * self.positions
-            self.mean_sq_pos = (1 - self.rmsd_alpha) * self.mean_sq_pos + self.rmsd_alpha * (self.positions**2)
-
-            # Calculate RMSD
-            # Var = E[x^2] - (E[x])^2
-            # Prevent negative due to float precision
-            msd_components = np.abs(self.mean_sq_pos - self.mean_pos**2)
-            msd = np.sum(msd_components, axis=1) # Sum dx^2 + dy^2 + dz^2
-            rmsd = np.sqrt(msd)
-            self.mean_rmsd = np.mean(rmsd)
 
         return self.positions

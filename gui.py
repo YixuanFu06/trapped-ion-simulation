@@ -20,9 +20,9 @@ init_gamma_laser = 2.0
 init_gamma_thermal = 0.1
 
 # Initialize Trap with new parameters
-trap = PaulTrap(num_ions=num_ions, frequencies=(init_freq, init_freq, 1.0), 
-                gamma_laser=init_gamma_laser, gamma_thermal=init_gamma_thermal, 
-                temperature=0.0020, rmsd_alpha=dt/5.0)
+trap = PaulTrap(num_ions=num_ions, frequencies=(init_freq, init_freq, 1.0),
+                gamma_laser=init_gamma_laser, gamma_thermal=init_gamma_thermal,
+                temperature=0.0020)
 
 # --- Visualization Setup ---
 fig = plt.figure(figsize=(14, 8)) # Increased width for controls
@@ -53,7 +53,6 @@ else:
 fps_text = fig.text(0.05, 0.95, '', transform=fig.transFigure)
 time_text = fig.text(0.05, 0.92, '', transform=fig.transFigure)
 temp_text = fig.text(0.05, 0.89, '', transform=fig.transFigure)
-rmsd_text = fig.text(0.05, 0.86, '', transform=fig.transFigure)
 count_text = fig.text(0.80, 0.95, '', transform=fig.transFigure, fontsize=12, fontweight='bold')
 
 # --- Interactive Widgets ---
@@ -62,8 +61,8 @@ ax_zoom = plt.axes([0.92, 0.25, 0.03, 0.5])
 slider_zoom = Slider(
     ax_zoom,
     'Zoom',
-    -2.0,
-    2.0,
+    -2.0, # 10^-2 = 0.01x
+    2.0,  # 10^2  = 100x
     valinit=0.0,
     orientation='vertical'
 )
@@ -145,26 +144,35 @@ def update_switches_callback(label):
     # Get current status of all checkbuttons
     status = check_switches.get_status() # (bool, bool, bool, bool)
     is_laser, is_real_laser, is_vacuum, is_stochastic = status
-    
+
+    # Constraint Logic: Link Laser and Real Laser
+    if label == 'Laser' and not is_laser and is_real_laser:
+        check_switches.set_active(1) # Toggle Real Laser to False
+        is_real_laser = False
+    elif label == 'Real Laser' and is_real_laser and not is_laser:
+        check_switches.set_active(0) # Toggle Laser to True
+        is_laser = True
+
     # Meaning of switches:
     # Laser: Checked = ON
     # Real Laser: Checked = Use units.GAMMA_LASER
     # Vacuum: Checked = ON (Environment is Vacuum) => Thermal Coupling is OFF.
     # Stochastic: Checked = ON
-    
+
     if is_real_laser:
         # Override slider and physics value
         slider_gamma_L.set_val(units.GAMMA_LASER)
-    
+
     trap.set_switches(laser=is_laser, thermal=(not is_vacuum), stochastic=is_stochastic)
 
     # UI Feedback logic
     # 1. Laser OFF -> Laser Damp fixed (disable interaction) and black
-    if not is_laser: 
+    if not is_laser:
         slider_gamma_L.set_active(False)
         if hasattr(slider_gamma_L, 'poly'):
              slider_gamma_L.poly.set_fc('black')
         slider_gamma_L.valtext.set_color('gray')
+        slider_gamma_L.label.set_color('gray')
     elif is_real_laser:
         # Laser ON + Real Laser ON -> Fixed to unit value
         slider_gamma_L.set_active(False)
@@ -197,7 +205,7 @@ def update_switches_callback(label):
     # Temp T Logic
     # Disable if (Vacuum ON) OR (Stochastic OFF)
     if is_vacuum or (not is_stochastic):
-        text_temp.set_active(False) 
+        text_temp.set_active(False)
         text_temp.label.set_color('gray')
         text_temp.text_disp.set_color('gray')
         text_temp.ax.set_facecolor('lightgray')
@@ -206,7 +214,7 @@ def update_switches_callback(label):
         text_temp.label.set_color('black')
         text_temp.text_disp.set_color('black')
         text_temp.ax.set_facecolor('white')
-        
+
     # Force redraw to apply style changes immediately
     fig.canvas.draw_idle()
 
@@ -236,13 +244,22 @@ slider_gamma_L.on_changed(update_params)
 slider_gamma_T.on_changed(update_params)
 
 def update_zoom(val):
-    scale = 10.0**slider_zoom.val
-    limit = base_limit * scale
+    # val is log10(magnification)
+    # val = 2.0 -> mag = 100 -> Zoom In -> Limit = Base / 100
+    # val = -2.0 -> mag = 0.01 -> Zoom Out -> Limit = Base / 0.01
+    mag = 10.0 ** val
+    limit = base_limit / mag
+    
     ax.set_xlim(-limit, limit)
     ax.set_ylim(-limit, limit)
     ax.set_zlim(-limit, limit)
+    
+    # Update label to show magnification factor
+    slider_zoom.valtext.set_text(f"x{mag:.2f}")
 
 slider_zoom.on_changed(update_zoom)
+# Initial call to set text
+update_zoom(0.0)
 
 # Matplotlib TextBox cursor position is tricky to access and manipulate reliably across versions.
 # We will implement a simplified version: Pressing Up/Down increments/decrements by a fixed step (0.0001) if no specific cursor logic works perfectly,
@@ -330,13 +347,13 @@ def add_ion_callback(event):
     try:
         n = int(text_add.text)
         trap.add_ion(n)
-        
+
         # If adding ions while in "Catch" mode (i.e. discarded/empty), switch button back to "Discard"
         if button_discard.cli_mode == 'catch':
              button_discard.label.set_text('Discard')
              ax_catch_txt.set_visible(False)
              button_discard.cli_mode = 'discard'
-             
+
         update_scatter()
     except ValueError:
         pass
@@ -350,7 +367,7 @@ def toggle_discard_catch(event):
         button_discard.label.set_text('Catch')
         ax_catch_txt.set_visible(True)
         button_discard.cli_mode = 'catch'
-        
+
         # Action: Clear ions
         trap.remove_all_ions()
         update_scatter()
@@ -359,7 +376,7 @@ def toggle_discard_catch(event):
         try:
             n = int(text_catch.text)
             trap.catch_ions(n)
-            
+
             # Switch back to Discard mode UI
             button_discard.label.set_text('Discard')
             ax_catch_txt.set_visible(False)
@@ -383,7 +400,7 @@ def update_frame(frame):
     current_real_time = time.time()
     dt_real = current_real_time - last_frame_time
     last_frame_time = current_real_time
-    
+
     steps = int(slider_spf.val)
     if dt_real > 0:
         fps = 1.0 / dt_real
@@ -399,11 +416,11 @@ def update_frame(frame):
     # Physics Update: Multiple steps per frame for speed
     for _ in range(steps):
         trap.update(dt)
-    
+
     # Visualization Update
     if trap.num_ions > 0 and particles is not None:
         particles._offsets3d = (trap.positions[:, 0], trap.positions[:, 1], trap.positions[:, 2])
-        
+
         real_temp_k = trap.real_temperature * units.TEMPERATURE
         temp_text.set_text(f'Real Temp: {trap.real_temperature:.4e} | {real_temp_k:.4e} K')
     else:
@@ -414,14 +431,10 @@ def update_frame(frame):
     # Update real-time text
     real_time_us = trap.current_time * units.TIME * 1e6
     time_text.set_text(f'Sim Time: {trap.current_time:.2f} | {real_time_us:.2f} µs')
-    
-    # RMSD Update
-    rmsd_um = trap.mean_rmsd * units.LENGTH * 1e6
-    rmsd_text.set_text(f'RMSD: {trap.mean_rmsd:.4f} | {rmsd_um:.4f} µm')
-    
+
     count_text.set_text(f'Ion Count: {trap.num_ions}')
 
-    return particles, time_text, temp_text, rmsd_text, fps_text, count_text
+    return particles, time_text, temp_text, fps_text, count_text
 
 ani = FuncAnimation(fig, update_frame, frames=200, interval=10, blit=False)
 
