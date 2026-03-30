@@ -13,12 +13,31 @@ from PyQt5.QtCore import QTimer, Qt
 from vispy import scene
 from vispy.color import get_colormap
 
-# Handle import of local physics engine
-try:
-    from paul_trap_torch import PaulTrap
-except ImportError:
-    print("Error: paul_trap_torch.py not found or PyTorch not installed.")
-    sys.exit(1)
+def select_backend():
+    # Priority: JAX -> PyTorch -> NumPy
+    try:
+        import jax
+        from paul_trap_jax import PaulTrap
+        platform = jax.devices()[0].platform.lower()
+        device = "GPU" if platform == "gpu" else "CPU"
+        return PaulTrap, "JAX", device
+    except Exception:
+        pass
+
+    try:
+        import torch
+        from paul_trap_torch import PaulTrap
+        device = "GPU" if torch.cuda.is_available() else "CPU"
+        return PaulTrap, "PyTorch", device
+    except Exception:
+        pass
+
+    from paul_trap import PaulTrap
+    return PaulTrap, "NumPy", "CPU"
+
+
+PaulTrap, BACKEND_NAME, DEVICE_NAME = select_backend()
+print(f"Using backend: {BACKEND_NAME} ({DEVICE_NAME})")
 
 import units
 
@@ -112,7 +131,7 @@ class NumericLineEdit(QLineEdit):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Paul Trap Simulation (VisPy)")
+        self.setWindowTitle(f"Paul Trap Simulation (VisPy) - {BACKEND_NAME} / {DEVICE_NAME}")
         self.resize(1600, 900)
 
         # --- Physics Initialization ---
@@ -194,16 +213,16 @@ class MainWindow(QMainWindow):
         self.lbl_fps = QLabel("FPS: 0.0")
         self.lbl_speed = QLabel("Speed: 0.0/s")
         self.lbl_time = QLabel("Sim Time: 0.00 µs")
+        self.lbl_backend = QLabel(f"Backend: {BACKEND_NAME}")
 
         # lbl_count moved to top
         self.lbl_real_temp = QLabel("Real Temp: 0.0000 K")
-        # Show device (CUDA or CPU)
-        device_str = str(self.trap.device).upper()
-        self.lbl_device = QLabel(f"Device: {device_str}")
+        self.lbl_device = QLabel(f"Device: {DEVICE_NAME}")
 
         info_layout.addWidget(self.lbl_fps)
         info_layout.addWidget(self.lbl_speed)
         info_layout.addWidget(self.lbl_time)
+        info_layout.addWidget(self.lbl_backend)
         # info_layout.addWidget(self.lbl_count)
         info_layout.addWidget(self.lbl_real_temp)
         info_layout.addWidget(self.lbl_device)

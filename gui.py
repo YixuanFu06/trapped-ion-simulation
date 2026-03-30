@@ -79,7 +79,7 @@ ax_gamma_T     = plt.axes([0.10, 0.04, 0.35, 0.03])
 
 # Switches (CheckButtons) - Right Column Bottom
 # [left, bottom, width, height]
-ax_switches    = plt.axes([0.55, 0.04, 0.12, 0.15]) 
+ax_switches    = plt.axes([0.55, 0.04, 0.12, 0.15])
 
 # Button Controls (Far Right Column Bottom)
 ax_reset       = plt.axes([0.80, 0.04, 0.08, 0.04])
@@ -114,7 +114,7 @@ text_add       = TextBox(ax_add_txt, '', initial='1')
 # Toggle Button for Discard/Catch
 button_discard = Button(ax_discard, 'Discard', hovercolor='0.975')
 # Helper variable to track state
-button_discard.cli_mode = 'discard' 
+button_discard.cli_mode = 'discard'
 
 text_catch     = TextBox(ax_catch_txt, '', initial='10')
 button_reset   = Button(ax_reset,  'Reset', hovercolor='0.975')

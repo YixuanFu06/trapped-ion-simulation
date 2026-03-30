@@ -23,16 +23,19 @@
 - **数值积分算法**: 采用 **BBK (Brünger-Brooks-Karplus)** 积分器。这是一种适用于 Langevin 动力学的改进型 Verlet 算法，具有良好的数值稳定性，能够准确模拟包含摩擦和热噪声的系统演化。
   - 算法利用半步速度预估和力场更新，确保了能量守恒（在无耗散下）和正确的正则系综采样。
 
-- **双引擎架构 (Dual-Engine Architecture)**:
-  本项目实现了两种独立的物理计算后端，以适应不同的计算需求：
+- **三引擎架构 (Triple-Engine Architecture)**:
+  本项目实现了三种物理计算后端，以适应不同的计算需求：
   1.  **NumPy Engine (`paul_trap.py`)**:
       - 基于 CPU 的标准实现。
       - 利用 NumPy 向量化运算，适合中小规模系统（< 100 离子）。
       - 通用性强，无额外硬件依赖。
   2.  **PyTorch Engine (`paul_trap_torch.py`)**:
-      - **新功能**: 基于 PyTorch 张量运算实现。
       - **GPU 加速**: 自动检测 CUDA 设备。在 GPU 上运行时，能够高效处理大规模离子晶体（> 500 离子）的 N-体相互作用计算。
       - **自动回退**: 若无 GPU，自动回退到 CPU 张量计算。
+  3.  **JAX Engine (`paul_trap_jax.py`)**:
+      - **新功能**: 基于 JAX 张量运算与 JIT 编译实现。
+      - **设备适配**: 支持 CPU / CUDA GPU / TPU（取决于已安装的 jaxlib 版本）。
+      - **后端优先级**: 在支持 JAX 的入口中，后端选择顺序为 **JAX -> PyTorch -> NumPy**。
 
 ### 2. 交互界面与使用方式 (Interfaces)
 项目提供了三种交互方式，分别适配不同的使用场景和物理引擎。
@@ -44,13 +47,13 @@
 - **启动**: `python gui.py`
 
 #### B. 高性能 GUI (`gui_vispy.py`)
-- **后端**: 强制使用 **PyTorch** 引擎 (需安装 torch)。
+- **后端**: **自适应**，优先级为 **JAX -> PyTorch -> NumPy**。
 - **渲染**: 基于 `VisPy` (OpenGL) 和 `PyQt5`。
 - **特点**: 利用 GPU 进行物理计算和图形渲染。极高的帧率，适合实时模拟大规模离子晶体。
 - **启动**: `python gui_vispy.py`
 
 #### C. 终端交互 TUI (`tui.py`)
-- **后端**: **自适应** (优先尝试加载 PyTorch，失败则回退至 NumPy)。
+- **后端**: **自适应**，优先级为 **JAX -> PyTorch -> NumPy**。
 - **渲染**: 基于 `curses` (终端字符界面)。
 - **特点**: 轻量级，适合在无图形界面的服务器或 SSH 远程连接中使用。
 - **启动**: `python tui.py`
@@ -95,6 +98,8 @@
 - `scipy`: 科学常数和物理单位定义
 
 **高性能/高级依赖 (Advanced)**
+- `jax`: JAX 引擎前端
+- `jaxlib`: JAX 设备后端（CPU 或 CUDA 版本）
 - `torch`: PyTorch 引擎 (支持 GPU)
 - `vispy`: 高性能 OpenGL 绘图
 - `PyQt5`: VisPy 的 GUI 后端框架
@@ -102,5 +107,8 @@
 **安装命令**:
 ```bash
 pip install numpy matplotlib scipy
+pip install jax jaxlib
 pip install torch vispy PyQt5
 ```
+
+> 说明：若需 JAX 的 CUDA 加速，请按 JAX 官方文档安装与 CUDA 版本匹配的 `jaxlib` 轮子；仅执行 `pip install jax jaxlib` 通常会安装 CPU 版本。

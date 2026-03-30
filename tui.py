@@ -3,12 +3,31 @@ import time
 import numpy as np
 import units
 
-try:
-    from paul_trap_torch import PaulTrap
-    print("Using PyTorch backend.")
-except ImportError:
-    print("PyTorch backend unavailable. Using NumPy backend.")
+def select_backend():
+    # Priority: JAX -> PyTorch -> NumPy
+    try:
+        import jax
+        from paul_trap_jax import PaulTrap
+        platform = jax.devices()[0].platform.lower()
+        device = "GPU" if platform == "gpu" else "CPU"
+        return PaulTrap, "JAX", device
+    except Exception:
+        pass
+
+    try:
+        import torch
+        from paul_trap_torch import PaulTrap
+        device = "GPU" if torch.cuda.is_available() else "CPU"
+        return PaulTrap, "PyTorch", device
+    except Exception:
+        pass
+
     from paul_trap import PaulTrap
+    return PaulTrap, "NumPy", "CPU"
+
+
+PaulTrap, BACKEND_NAME, DEVICE_NAME = select_backend()
+print(f"Using backend: {BACKEND_NAME} ({DEVICE_NAME})")
 
 def main(stdscr):
     # Setup curses
@@ -18,7 +37,7 @@ def main(stdscr):
     stdscr.keypad(True) # Enable special keys (arrows)
 
     # --- Simulation Parameters (Hardcoded config) ---
-    num_ions = 10
+    num_ions = 1000
     dt = 0.01
     init_freq = 8.0
     init_gamma_laser = 2.0
@@ -29,7 +48,6 @@ def main(stdscr):
     trap = PaulTrap(num_ions=num_ions, frequencies=(init_freq, init_freq, 1.0),
                     gamma_laser=init_gamma_laser, gamma_thermal=init_gamma_thermal,
                     temperature=init_temp)
-
     # State variables for switches (matching gui.py defaults: Laser=True, Real=False, Vacuum=True, Stochastic=True)
     state = {
         'laser': True,
@@ -270,45 +288,46 @@ def main(stdscr):
                     stdscr.erase()
 
                     # Header
-                    stdscr.addstr(0, 0, "Paul Trap Simulation (TUI Mode - Free Running)", curses.A_BOLD)
+                    stdscr.addstr(0, 0, "Paul Trap Simulation (TUI Mode)", curses.A_BOLD)
                     stdscr.addstr(1, 0, "=" * 50)
+                    stdscr.addstr(2, 0, f"Backend: {BACKEND_NAME} | Device: {DEVICE_NAME}")
 
                     # calculations
                     sim_time_us = trap.current_time * units.TIME * 1e6
                     real_temp_k = trap.real_temperature * units.TEMPERATURE
 
                     # Data Display
-                    stdscr.addstr(2, 0, f"Ion Count:  {trap.num_ions}")
-                    stdscr.addstr(3, 0, f"Sim Time:   {trap.current_time:8.2f} ({sim_time_us:8.2f} µs)")
-                    stdscr.addstr(4, 0, f"Real Temp:  {trap.real_temperature:8.4e} ({real_temp_k:8.4e} K)")
+                    stdscr.addstr(3, 0, f"Ion Count:  {trap.num_ions}")
+                    stdscr.addstr(4, 0, f"Sim Time:   {trap.current_time:8.2f} ({sim_time_us:8.2f} µs)")
+                    stdscr.addstr(5, 0, f"Real Temp:  {trap.real_temperature:8.4e} ({real_temp_k:8.4e} K)")
 
                     # Configuration Section
-                    stdscr.addstr(6, 0, "Current Configuration (Modify in code):", curses.A_BOLD | curses.A_UNDERLINE)
-                    stdscr.addstr(7, 0, f"Frequencies (x,y,z): {trap.frequencies}")
+                    stdscr.addstr(7, 0, "Current Configuration (Modify in code):", curses.A_BOLD | curses.A_UNDERLINE)
+                    stdscr.addstr(8, 0, f"Frequencies (x,y,z): {trap.frequencies}")
                     
                     laser_status = "ACTIVE" if trap.is_laser_on else "OFF"
                     thermal_status = "ACTIVE" if trap.is_thermal_on else "OFF (Vacuum)"
 
-                    stdscr.addstr(8, 0, f"Gamma Laser:   {trap.gamma_laser:.4f} [{laser_status}]")
-                    stdscr.addstr(9, 0, f"Gamma Thermal: {trap.gamma_thermal:.4f} [{thermal_status}]")
-                    stdscr.addstr(10, 0, f"Target Temp:   {trap.temperature:.4f}")
-                    stdscr.addstr(11, 0, f"Noise Std Dev: {trap.random_force_std:.4e}")
+                    stdscr.addstr(9, 0, f"Gamma Laser:   {trap.gamma_laser:.4f} [{laser_status}]")
+                    stdscr.addstr(10, 0, f"Gamma Thermal: {trap.gamma_thermal:.4f} [{thermal_status}]")
+                    stdscr.addstr(11, 0, f"Target Temp:   {trap.temperature:.4f}")
+                    stdscr.addstr(12, 0, f"Noise Std Dev: {trap.random_force_std:.4e}")
 
                     # Controls Section
-                    stdscr.addstr(13, 0, "Controls (Press key to toggle):", curses.A_BOLD | curses.A_UNDERLINE)
+                    stdscr.addstr(14, 0, "Controls (Press key to toggle):", curses.A_BOLD | curses.A_UNDERLINE)
 
                     def checkbox(label, is_on, key_char):
                         mark = "[X]" if is_on else "[ ]"
                         return f"{key_char.upper()}: {mark} {label}"
 
-                    stdscr.addstr(14, 0,  checkbox("Laser", state['laser'], 'l'))
-                    stdscr.addstr(15, 0, checkbox("Real Laser Params", state['real_laser'], 'k'))
-                    stdscr.addstr(16, 0, checkbox("Vacuum (No Thermal)", state['vacuum'], 'v'))
-                    stdscr.addstr(17, 0, checkbox("Stochastic Noise", state['stochastic'], 's'))
-                    stdscr.addstr(18, 0, "R: Reset Simulation")
-                    stdscr.addstr(19, 0, "I: Start Lindemann Index Calc")
-                    stdscr.addstr(20, 0, "UP/DOWN: Adjust Target FPS")
-                    stdscr.addstr(21, 0, "Q: Quit")
+                    stdscr.addstr(15, 0,  checkbox("Laser", state['laser'], 'l'))
+                    stdscr.addstr(16, 0, checkbox("Real Laser Params", state['real_laser'], 'k'))
+                    stdscr.addstr(17, 0, checkbox("Vacuum (No Thermal)", state['vacuum'], 'v'))
+                    stdscr.addstr(18, 0, checkbox("Stochastic Noise", state['stochastic'], 's'))
+                    stdscr.addstr(19, 0, "R: Reset Simulation")
+                    stdscr.addstr(20, 0, "I: Start Lindemann Index Calc")
+                    stdscr.addstr(21, 0, "UP/DOWN: Adjust Target FPS")
+                    stdscr.addstr(22, 0, "Q: Quit")
 
                     # Lindemann Status
                     l_status = lindemann_state['status']
@@ -322,21 +341,21 @@ def main(stdscr):
                     elif l_status == 'DONE':
                         l_info = f"Completed. Index: {lindemann_state['result']:.5f}"
 
-                    stdscr.addstr(23, 0, "Lindemann Index:", curses.A_BOLD | curses.A_UNDERLINE)
-                    stdscr.addstr(24, 0, l_info)
+                    stdscr.addstr(24, 0, "Lindemann Index:", curses.A_BOLD | curses.A_UNDERLINE)
+                    stdscr.addstr(25, 0, l_info)
 
                     # Performance Stats
-                    stdscr.addstr(26, 0, "Performance Stats:", curses.A_BOLD | curses.A_UNDERLINE)
-                    stdscr.addstr(27, 0, f"FPS:        {fps:5.1f} / {target_fps:3.0f} (Target) | Batch: {steps_batch_size:4d}") 
-                    stdscr.addstr(28, 0, f"Sim Speed:  {sim_speed:8.2f}/s ({sim_speed_us:8.2f} µs/sec) | dt: {dt}")
-                    stdscr.addstr(29, 0, f"Perf:       {p_duration*1000:6.3f} ms/batch (Target: {TARGET_BATCH_DURATION*1000:.1f} ms)")
+                    stdscr.addstr(27, 0, "Performance Stats:", curses.A_BOLD | curses.A_UNDERLINE)
+                    stdscr.addstr(28, 0, f"FPS:        {fps:5.1f} / {target_fps:3.0f} (Target) | Batch: {steps_batch_size:4d}")
+                    stdscr.addstr(29, 0, f"Sim Speed:  {sim_speed:8.2f}/s ({sim_speed_us:8.2f} µs/sec) | dt: {dt}")
+                    stdscr.addstr(30, 0, f"Perf:       {p_duration*1000:6.3f} ms/batch (Target: {TARGET_BATCH_DURATION*1000:.1f} ms)")
 
                     stdscr.refresh()
 
                 except curses.error:
                     pass
 
-            # No Sleep! Maximize CPU usage for calculation.
+            # No Sleep! Maximize CPU/GPU usage for calculation.
 
         except curses.error:
             pass
