@@ -37,7 +37,7 @@ def main(stdscr):
     stdscr.keypad(True) # Enable special keys (arrows)
 
     # --- Simulation Parameters (Hardcoded config) ---
-    num_ions = 100
+    num_ions = 1000
     dt = 0.01
     init_freq = 8.0
     init_gamma_laser = 2.0

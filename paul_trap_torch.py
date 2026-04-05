@@ -1,9 +1,61 @@
 '''
-PaulTrap Physics Core (PyTorch-Accelerated)
+PaulTrap Physics Core (PyTorch-Accelerated, torch.compile optimized)
 '''
 import units
 import numpy as np
 import torch
+import logging
+
+# Suppress torch.compile warnings that break TUI output
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+torch.set_float32_matmul_precision('high')
+
+logging.getLogger("torch._dynamo").setLevel(logging.ERROR)
+logging.getLogger("torch.distributed").setLevel(logging.ERROR)
+logging.getLogger("torch.fx").setLevel(logging.ERROR)
+
+def _compute_forces_impl(positions, frequencies):
+    if positions.shape[0] == 0:
+        return torch.zeros_like(positions)
+
+    forces = -(frequencies**2) * positions
+
+    delta_r = positions.unsqueeze(1) - positions.unsqueeze(0)
+    distances = torch.norm(delta_r, dim=-1)
+    dist_pow3 = distances.pow(3)
+
+    # Avoid zero division and self-interaction safely without in-place mutation
+    eye = torch.eye(positions.shape[0], dtype=torch.bool, device=positions.device)
+    dist_pow3 = torch.where(eye, 1.0, dist_pow3)
+
+    inv_dist3 = 1.0 / dist_pow3
+    inv_dist3 = torch.where(eye, 0.0, inv_dist3)
+
+    coulomb_forces = torch.sum(delta_r * inv_dist3.unsqueeze(-1), dim=1)
+    return forces + coulomb_forces
+
+@torch.compile(mode="reduce-overhead")
+def _update_n_steps_compiled(steps: int, dt: float, gamma_eff: float, random_force_std: float, positions: torch.Tensor, velocities: torch.Tensor, frequencies: torch.Tensor, stored_forces: torch.Tensor):
+    dt_sqrt = dt**0.5
+    for _ in range(steps):
+        noise = (random_force_std / dt_sqrt) * torch.randn_like(positions)
+
+        f_total = stored_forces + noise
+        v_half = velocities * (1 - 0.5 * gamma_eff * dt) + 0.5 * f_total * dt
+        positions = positions + v_half * dt
+
+        f_det_new = _compute_forces_impl(positions, frequencies)
+        
+        f_total_new = f_det_new + noise
+        stored_forces = f_det_new
+
+        velocities = (v_half + 0.5 * f_total_new * dt) / (1 + 0.5 * gamma_eff * dt)
+
+    num_ions = positions.shape[0]
+    real_temp = torch.sum(velocities**2) / (3 * num_ions)
+    return positions, velocities, stored_forces, real_temp
+
 
 class PaulTrap:
     def __init__(self, num_ions, frequencies, gamma_laser, gamma_thermal, temperature, precision='float64'):
@@ -210,84 +262,38 @@ class PaulTrap:
 
     def compute_forces(self):
         if self.num_ions == 0:
-            forces = torch.zeros((0, 3), device=self.device, dtype=self.dtype)
-            return forces
-
-        forces = torch.zeros_like(self._positions, dtype=self.dtype)
-
-        # Vectorized trap forces
-        # frequencies is (3,), positions is (N, 3)
-        forces -= self._frequencies**2 * self._positions
-
-        # Add Coulomb forces between ions (Vectorized)
-        # delta_r: (N, 1, 3) - (1, N, 3) -> (N, N, 3)
-        delta_r = self._positions.unsqueeze(1) - self._positions.unsqueeze(0)
-
-        # distances: (N, N)
-        distances = torch.norm(delta_r, dim=-1)
-
-        # Handle division by zero (diagonal)
-        dist_pow3 = distances.pow(3)
-        # Avoid zero division by setting diagonal to INF or 1.0 (masked later)
-        # We fill diagonal of dist_pow3 with 1.0 safely
-        dist_pow3.fill_diagonal_(1.0)
-
-        inv_dist3 = 1.0 / dist_pow3
-        inv_dist3.fill_diagonal_(0.0) # Explicitly zero out self-interaction
-
-        # coulomb_forces: sum over j (axis 1) of delta_r_ij * inv_dist3_ij
-        # delta_r: (N, N, 3)
-        # inv_dist3: (N, N) -> (N, N, 1)
-        coulomb_forces = torch.sum(delta_r * inv_dist3.unsqueeze(-1), dim=1)
-        forces += coulomb_forces
-        return forces
+            return torch.zeros((0, 3), device=self.device, dtype=self.dtype)
+        return _compute_forces_impl(self._positions, self._frequencies)
 
     def update(self, dt):
         """
-        Updates the simulation.
-        Returns the internal positions tensor to avoid CPU sync in tight loops.
-        Note: The return value is technically a Tensor, not a Numpy array, 
-        but known consumers (gui.py, tui.py) ignore the return value anyway.
-        Access .positions property to get a Numpy array.
+        Updates the simulation for 1 step.
+        Returns the internal positions tensor to avoid CPU sync.
         """
-        if self.num_ions == 0:
-            return self._positions
-
-        gamma_eff = self.gamma_eff
-
-        # BBK algorithm
-        # Calculate random forces once per step
-        random_forces = self.random_force_std * torch.randn(self._positions.shape, device=self.device, dtype=self.dtype
-        random_forces = self.random_force_std * torch.randn(self._positions.shape, device=self.device, dtype=self.dtype) / np.sqrt(dt)
-
-        # Optimize: reuse cached forces if available
-        if self.stored_forces is None or self.stored_forces.shape != self._positions.shape:
-            self.stored_forces = self.compute_forces()
-
-        forces_t = self.stored_forces + random_forces
-        v_half = self._velocities * (1 - 0.5 * gamma_eff * dt) + 0.5 * forces_t * dt
-        self._positions += v_half * dt
-
-        # Compute new deterministic forces at new position and cache
-        new_deterministic_forces = self.compute_forces()
-        forces_new = new_deterministic_forces + random_forces
-        self.stored_forces = new_deterministic_forces
-
-        self._velocities = (v_half + 0.5 * forces_new * dt) / (1 + 0.5 * gamma_eff * dt)
-
-        # Update Real Temperature (on device)
-        # T = sum(|v_i|^2) / (3 * N)
-        self._real_temperature = torch.sum(self._velocities**2) / (3 * self.num_ions)
-
-        self.current_time += dt
-
-        return self._positions
+        return self.update_n_steps(dt, 1)
 
     def update_n_steps(self, dt, steps):
         """
-        Updates the simulation for N steps.
+        Updates the simulation for N steps using torch.compile caching.
         """
-        for _ in range(steps):
-            self.update(dt)
+        if self.num_ions == 0 or steps <= 0:
+            return self._positions
+
+        if self.stored_forces is None or self.stored_forces.shape != self._positions.shape:
+            self.stored_forces = self.compute_forces()
+
+        with torch._dynamo.config.patch(suppress_errors=True):
+            self._positions, self._velocities, self.stored_forces, self._real_temperature = _update_n_steps_compiled(
+                int(steps), dt, float(self.gamma_eff), float(self.random_force_std),
+                self._positions, self._velocities, self._frequencies, self.stored_forces
+            )
+
+        self.current_time += dt * steps
+        
+        # Perform implicit wait. Wait implicitly for the queued ops.
+        # This keeps the host aligned with performance trackers without blocking if possible
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(device=self.device)
+            
         return self._positions
 
