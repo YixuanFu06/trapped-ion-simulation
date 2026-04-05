@@ -414,8 +414,7 @@ def update_frame(frame):
     fps_text.set_text(f'FPS: {fps:.1f} | Speed: {sim_speed:.2f}/s ({sim_speed_us:.2f} µs/s) | dt: {dt} x {steps}')
 
     # Physics Update: Multiple steps per frame for speed
-    for _ in range(steps):
-        trap.update(dt)
+    trap.update_n_steps(dt, steps)
 
     # Visualization Update
     if trap.num_ions > 0 and particles is not None:

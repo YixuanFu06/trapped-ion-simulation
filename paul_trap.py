@@ -5,7 +5,7 @@ import units
 import numpy as np
 
 class PaulTrap:
-    def __init__(self, num_ions: int, frequencies: tuple, gamma_laser: float, gamma_thermal: float, temperature: float):
+    def __init__(self, num_ions: int, frequencies: tuple, gamma_laser: float, gamma_thermal: float, temperature: float, precision='float64'):
         """
         Initialize the Paul Trap simulation.
 
@@ -15,7 +15,10 @@ class PaulTrap:
             gamma_laser (float): Laser cooling damping rate.
             gamma_thermal (float): Thermal bath coupling rate.
             temperature (float): Target temperature of the thermal bath.
+            precision (str): Precision for backward compatibility with accelerated backends.
         """
+        self.dtype = np.float64 if precision == 'float64' else np.float32
+
         self.num_ions = num_ions
         # Store initial params for reset
         self.current_time = 0.0
@@ -230,3 +233,12 @@ class PaulTrap:
         self.current_time += dt
 
         return self.positions
+
+    def update_n_steps(self, dt, steps):
+        """
+        Updates the simulation for N steps.
+        """
+        for _ in range(steps):
+            self.update(dt)
+        return self.positions
+

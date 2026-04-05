@@ -43,6 +43,7 @@ import units
 
 # --- Configuration ---
 DT = 0.01
+PRECISION = 'float64' # 'float32' or 'float64'
 
 class NumericLineEdit(QLineEdit):
     """
@@ -144,7 +145,8 @@ class MainWindow(QMainWindow):
             frequencies=(init_freq, init_freq, 1.0),
             gamma_laser=init_gamma_laser,
             gamma_thermal=init_gamma_thermal,
-            temperature=0.0020
+            temperature=0.0020,
+            precision=PRECISION
         )
 
         # Performance Tracking
@@ -213,19 +215,14 @@ class MainWindow(QMainWindow):
         self.lbl_fps = QLabel("FPS: 0.0")
         self.lbl_speed = QLabel("Speed: 0.0/s")
         self.lbl_time = QLabel("Sim Time: 0.00 µs")
-        self.lbl_backend = QLabel(f"Backend: {BACKEND_NAME}")
-
-        # lbl_count moved to top
         self.lbl_real_temp = QLabel("Real Temp: 0.0000 K")
-        self.lbl_device = QLabel(f"Device: {DEVICE_NAME}")
+        self.lbl_device_and_backend = QLabel(f"Device: {DEVICE_NAME} | Backend: {BACKEND_NAME} | Precision: {PRECISION}")
 
         info_layout.addWidget(self.lbl_fps)
         info_layout.addWidget(self.lbl_speed)
         info_layout.addWidget(self.lbl_time)
-        info_layout.addWidget(self.lbl_backend)
-        # info_layout.addWidget(self.lbl_count)
         info_layout.addWidget(self.lbl_real_temp)
-        info_layout.addWidget(self.lbl_device)
+        info_layout.addWidget(self.lbl_device_and_backend)
         self.info_group.setLayout(info_layout)
         controls_layout.addWidget(self.info_group)
 
@@ -575,8 +572,7 @@ class MainWindow(QMainWindow):
 
     def update_loop(self):
         # Physics Step
-        for _ in range(self.spf):
-            self.trap.update(DT)
+        self.trap.update_n_steps(DT, self.spf)
 
         # Performance Calc
         self.frame_count += 1

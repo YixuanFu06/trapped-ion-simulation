@@ -6,13 +6,14 @@ import numpy as np
 import torch
 
 class PaulTrap:
-    def __init__(self, num_ions, frequencies, gamma_laser, gamma_thermal, temperature):
+    def __init__(self, num_ions, frequencies, gamma_laser, gamma_thermal, temperature, precision='float64'):
         self.num_ions = num_ions
         # Store initial params for reset
         self.current_time = 0.0
 
         # Determine device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.dtype = torch.float64 if precision == 'float64' else torch.float32
 
         # Physics Parameters
         self.init_gamma_laser = gamma_laser
@@ -28,12 +29,12 @@ class PaulTrap:
 
         # Internal State Tensors (prefixed with _)
         # Initialize with zeros, will be set in reset()
-        self._positions = torch.zeros((self.num_ions, 3), dtype=torch.float64, device=self.device)
-        self._velocities = torch.zeros((self.num_ions, 3), dtype=torch.float64, device=self.device)
-        self._frequencies = torch.tensor(frequencies, dtype=torch.float64, device=self.device)
+        self._positions = torch.zeros((self.num_ions, 3), dtype=self.dtype, device=self.device)
+        self._velocities = torch.zeros((self.num_ions, 3), dtype=self.dtype, device=self.device)
+        self._frequencies = torch.tensor(frequencies, dtype=self.dtype, device=self.device)
 
         # Real temperature tracking (scalar tensor to avoid sync in loop)
-        self._real_temperature = torch.tensor(temperature, dtype=torch.float64, device=self.device)
+        self._real_temperature = torch.tensor(temperature, dtype=self.dtype, device=self.device)
 
         # Precompute effective gamma and noise
         self.gamma_eff = 0.0
@@ -55,7 +56,7 @@ class PaulTrap:
     @positions.setter
     def positions(self, value):
         """Set positions from array-like."""
-        self._positions = torch.tensor(value, dtype=torch.float64, device=self.device)
+        self._positions = torch.tensor(value, dtype=self.dtype, device=self.device)
 
     @property
     def velocities(self):
@@ -65,7 +66,7 @@ class PaulTrap:
     @velocities.setter
     def velocities(self, value):
         """Set velocities from array-like."""
-        self._velocities = torch.tensor(value, dtype=torch.float64, device=self.device)
+        self._velocities = torch.tensor(value, dtype=self.dtype, device=self.device)
 
     @property
     def frequencies(self):
@@ -80,7 +81,7 @@ class PaulTrap:
     @real_temperature.setter
     def real_temperature(self, value):
         """Set real temperature manually."""
-        self._real_temperature = torch.tensor(value, dtype=torch.float64, device=self.device)
+        self._real_temperature = torch.tensor(value, dtype=self.dtype, device=self.device)
 
     # --- Methods ---
 
@@ -90,8 +91,8 @@ class PaulTrap:
         self.stored_forces = None
 
         if self.num_ions == 0:
-            self._positions = torch.empty((0, 3), device=self.device)
-            self._velocities = torch.empty((0, 3), device=self.device)
+            self._positions = torch.empty((0, 3), device=self.device, dtype=self.dtype)
+            self._velocities = torch.empty((0, 3), device=self.device, dtype=self.dtype)
             return
 
         # Initialize positions based on Boltzmann distribution in harmonic trap
@@ -99,23 +100,23 @@ class PaulTrap:
         if self.temperature > 0:
             # Avoid sync: keep freq on device
             sigma_pos = np.sqrt(self.temperature) / self._frequencies.cpu().numpy()
-            sigma_tensor = torch.tensor(sigma_pos, device=self.device, dtype=torch.float64)
+            sigma_tensor = torch.tensor(sigma_pos, device=self.device, dtype=self.dtype)
             # Use broadcasting: (N, 3) * (3,)
-            self._positions = torch.randn((self.num_ions, 3), device=self.device, dtype=torch.float64) * sigma_tensor
+            self._positions = torch.randn((self.num_ions, 3), device=self.device, dtype=self.dtype) * sigma_tensor
         else:
             # Fallback to small random displacements if T=0
-            self._positions = 2.0 * torch.rand((self.num_ions, 3), device=self.device, dtype=torch.float64) - 1.0
+            self._positions = 2.0 * torch.rand((self.num_ions, 3), device=self.device, dtype=self.dtype) - 1.0
 
         # Initialize velocities with Maxwell-Boltzmann distribution (Gaussian)
         # P(v) ~ exp(-v^2 / (2T))  => sigma = sqrt(T)
         if self.temperature > 0:
             sigma = np.sqrt(self.temperature)
-            self._velocities = torch.normal(mean=0.0, std=float(sigma), size=(self.num_ions, 3), device=self.device, dtype=torch.float64)
+            self._velocities = torch.normal(mean=0.0, std=float(sigma), size=(self.num_ions, 3), device=self.device, dtype=self.dtype)
         else:
-            self._velocities = torch.zeros((self.num_ions, 3), device=self.device, dtype=torch.float64)
+            self._velocities = torch.zeros((self.num_ions, 3), device=self.device, dtype=self.dtype)
 
         # Reset real temperature tracking (scalar tensor)
-        self._real_temperature = torch.tensor(self.temperature, dtype=torch.float64, device=self.device)
+        self._real_temperature = torch.tensor(self.temperature, dtype=self.dtype, device=self.device)
 
     def add_ion(self, n=1):
         self.num_ions += n
@@ -126,28 +127,28 @@ class PaulTrap:
         # Initialize new position similar to reset but for one particle
         if self.temperature > 0:
             sigma_pos = np.sqrt(self.temperature) / self._frequencies.cpu().numpy()
-            sigma_tensor = torch.tensor(sigma_pos, device=self.device, dtype=torch.float64)
-            new_pos = torch.randn((n, 3), device=self.device, dtype=torch.float64) * sigma_tensor
+            sigma_tensor = torch.tensor(sigma_pos, device=self.device, dtype=self.dtype)
+            new_pos = torch.randn((n, 3), device=self.device, dtype=self.dtype) * sigma_tensor
         else:
-            new_pos = 2.0 * torch.rand((n, 3), device=self.device, dtype=torch.float64) - 1.0
+            new_pos = 2.0 * torch.rand((n, 3), device=self.device, dtype=self.dtype) - 1.0
 
         self._positions = torch.vstack((self._positions, new_pos))
 
         # Initialize new velocity
         if self.temperature > 0:
             sigma = np.sqrt(self.temperature)
-            new_vel = torch.normal(mean=0.0, std=float(sigma), size=(n, 3), device=self.device, dtype=torch.float64)
+            new_vel = torch.normal(mean=0.0, std=float(sigma), size=(n, 3), device=self.device, dtype=self.dtype)
         else:
-            new_vel = torch.zeros((n, 3), device=self.device, dtype=torch.float64)
+            new_vel = torch.zeros((n, 3), device=self.device, dtype=self.dtype)
 
         self._velocities = torch.vstack((self._velocities, new_vel))
 
     def remove_all_ions(self):
         self.num_ions = 0
-        self._positions = torch.empty((0, 3), device=self.device, dtype=torch.float64)
-        self._velocities = torch.empty((0, 3), device=self.device, dtype=torch.float64)
+        self._positions = torch.empty((0, 3), device=self.device, dtype=self.dtype)
+        self._velocities = torch.empty((0, 3), device=self.device, dtype=self.dtype)
         self.current_time = 0.0
-        self._real_temperature = torch.tensor(0.0, device=self.device, dtype=torch.float64)
+        self._real_temperature = torch.tensor(0.0, device=self.device, dtype=self.dtype)
         self.stored_forces = None
 
     def catch_ions(self, n):
@@ -209,10 +210,10 @@ class PaulTrap:
 
     def compute_forces(self):
         if self.num_ions == 0:
-            forces = torch.zeros((0, 3), device=self.device, dtype=torch.float64)
+            forces = torch.zeros((0, 3), device=self.device, dtype=self.dtype)
             return forces
 
-        forces = torch.zeros_like(self._positions, dtype=torch.float64)
+        forces = torch.zeros_like(self._positions, dtype=self.dtype)
 
         # Vectorized trap forces
         # frequencies is (3,), positions is (N, 3)
@@ -256,7 +257,8 @@ class PaulTrap:
 
         # BBK algorithm
         # Calculate random forces once per step
-        random_forces = self.random_force_std * torch.randn(self._positions.shape, device=self.device, dtype=torch.float64) / np.sqrt(dt)
+        random_forces = self.random_force_std * torch.randn(self._positions.shape, device=self.device, dtype=self.dtype
+        random_forces = self.random_force_std * torch.randn(self._positions.shape, device=self.device, dtype=self.dtype) / np.sqrt(dt)
 
         # Optimize: reuse cached forces if available
         if self.stored_forces is None or self.stored_forces.shape != self._positions.shape:
@@ -280,3 +282,12 @@ class PaulTrap:
         self.current_time += dt
 
         return self._positions
+
+    def update_n_steps(self, dt, steps):
+        """
+        Updates the simulation for N steps.
+        """
+        for _ in range(steps):
+            self.update(dt)
+        return self._positions
+

@@ -37,17 +37,18 @@ def main(stdscr):
     stdscr.keypad(True) # Enable special keys (arrows)
 
     # --- Simulation Parameters (Hardcoded config) ---
-    num_ions = 1000
+    num_ions = 100
     dt = 0.01
     init_freq = 8.0
     init_gamma_laser = 2.0
     init_gamma_thermal = 0.1
     init_temp = 0.0020
+    PRECISION = 'float64' # 'float32' or 'float64'
 
     # Initialize Trap
     trap = PaulTrap(num_ions=num_ions, frequencies=(init_freq, init_freq, 1.0),
                     gamma_laser=init_gamma_laser, gamma_thermal=init_gamma_thermal,
-                    temperature=init_temp)
+                    temperature=init_temp, precision=PRECISION)
     # State variables for switches (matching gui.py defaults: Laser=True, Real=False, Vacuum=True, Stochastic=True)
     state = {
         'laser': True,
@@ -84,7 +85,7 @@ def main(stdscr):
     steps_batch_size = 10
 
     # Auto-tune variables
-    TARGET_BATCH_DURATION = 0.005 # Target 5ms per batch check for responsive input
+    TARGET_BATCH_DURATION = 0.05 # Target 50ms per batch to overcome JAX fixed dispatch overhead
     batch_tuner_history = []
 
     # --- Lindemann Index Variables ---
@@ -178,22 +179,33 @@ def main(stdscr):
             # Determine how to run based on Lindemann status
             if lindemann_state['status'] == 'IDLE' or lindemann_state['status'] == 'DONE':
                 # Normal fast loop
-                for _ in range(steps_batch_size):
-                    trap.update(dt)
+                trap.update_n_steps(dt, steps_batch_size)
             else:
                 # Lindemann Calculation Active - we need to count steps carefully
                 steps_remaining = steps_batch_size
                 while steps_remaining > 0:
-                    trap.update(dt)
-                    lindemann_state['step_counter'] += 1
-                    steps_remaining -= 1
-
                     if lindemann_state['status'] == 'EQ':
+                        steps_to_eq = LINDEMANN_N_EQ - lindemann_state['step_counter']
+                        steps_to_run = min(steps_remaining, steps_to_eq)
+                        trap.update_n_steps(dt, steps_to_run)
+                        lindemann_state['step_counter'] += steps_to_run
+                        steps_remaining -= steps_to_run
+
                         if lindemann_state['step_counter'] >= LINDEMANN_N_EQ:
                             lindemann_state['status'] = 'PROD'
                             lindemann_state['step_counter'] = 0 # Reset for production phase
 
                     elif lindemann_state['status'] == 'PROD':
+                        # Steps until next sample
+                        steps_to_sample = LINDEMANN_N_SAMPLE - (lindemann_state['step_counter'] % LINDEMANN_N_SAMPLE)
+                        if steps_to_sample == 0: 
+                            steps_to_sample = LINDEMANN_N_SAMPLE
+                            
+                        steps_to_run = min(steps_remaining, steps_to_sample)
+                        trap.update_n_steps(dt, steps_to_run)
+                        lindemann_state['step_counter'] += steps_to_run
+                        steps_remaining -= steps_to_run
+
                         # Sample logic
                         if lindemann_state['step_counter'] % LINDEMANN_N_SAMPLE == 0:
                             # Calculate all pairs distances
@@ -290,7 +302,7 @@ def main(stdscr):
                     # Header
                     stdscr.addstr(0, 0, "Paul Trap Simulation (TUI Mode)", curses.A_BOLD)
                     stdscr.addstr(1, 0, "=" * 50)
-                    stdscr.addstr(2, 0, f"Backend: {BACKEND_NAME} | Device: {DEVICE_NAME}")
+                    stdscr.addstr(2, 0, f"Backend: {BACKEND_NAME} | Device: {DEVICE_NAME} | Precision: {PRECISION}")
 
                     # calculations
                     sim_time_us = trap.current_time * units.TIME * 1e6
